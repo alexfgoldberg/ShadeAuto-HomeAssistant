@@ -15,7 +15,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, RAIL_BOTTOM, RAIL_MIDDLE, RAIL_FIELDS
+from .const import DOMAIN, RAIL_BOTTOM, RAIL_MIDDLE, RAIL_FIELDS, RAIL_INVERT
 from .coordinator import ShadeAutoCoordinator
 import logging
 
@@ -51,6 +51,7 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         self._attr_name = name
         self._rail = rail
         self._rail_field = RAIL_FIELDS[rail]
+        self._invert = RAIL_INVERT[rail]
 
         thing = coordinator.data.get("thing_name") or coordinator.api.host
         # Bottom keeps the original unique_id (no history loss); middle gets a suffix.
@@ -275,13 +276,21 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
             self._anim_task = None
             _LOGGER.debug("_animate_slider: uid=%s Finished", self._uid)
             
+    # --- rail-direction conversion (HA 0=closed/100=open <-> hub units) ---
+
+    def _flip(self, pos: int | None) -> int | None:
+        """Convert between hub units and HA units. Symmetric; no-op unless inverted."""
+        if pos is None or not self._invert:
+            return pos
+        return 100 - int(pos)
+
     # --- core properties ---
 
     @property
     def current_cover_position(self) -> int | None:
-        """Report the shade position, using time-based estimation when enabled."""
-        pos = self._current_estimated_position()
-        _LOGGER.debug("pos_debug: current_cover_position uid=%s -> %s", self._uid, pos)
+        """Report the shade position (HA units), using estimation when enabled."""
+        pos = self._flip(self._current_estimated_position())
+        _LOGGER.debug("pos_debug: current_cover_position uid=%s rail=%s -> %s", self._uid, self._rail, pos)
         return pos
 
     @property
@@ -297,9 +306,9 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         now = time.monotonic()
         if now - self._est_start_ts >= self._est_travel_time_s:
             return None
-        # target greater than start => opening
+        # target greater than start => opening (flip for the inverted top rail)
         val = self._est_target > self._est_start_pos
-        return val
+        return (not val) if self._invert else val
 
     @property
     def is_closing(self) -> bool | None:
@@ -309,9 +318,9 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         now = time.monotonic()
         if now - self._est_start_ts >= self._est_travel_time_s:
             return None
-        # target less than start => closing
+        # target less than start => closing (flip for the inverted top rail)
         val = self._est_target < self._est_start_pos
-        return val
+        return (not val) if self._invert else val
 
     # --- commands ---
 
@@ -325,11 +334,11 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         self.coordinator.register_command(self._uid, pos, rail=self._rail)
 
     async def async_set_cover_position(self, **kwargs) -> None:
-        await self._move_to(int(kwargs["position"]))
+        await self._move_to(self._flip(int(kwargs["position"])))
 
     async def async_open_cover(self, **kwargs) -> None:
-        await self._move_to(100)
+        await self._move_to(self._flip(100))
 
     async def async_close_cover(self, **kwargs) -> None:
-        await self._move_to(0)
+        await self._move_to(self._flip(0))
 

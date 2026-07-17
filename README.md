@@ -27,6 +27,10 @@ exposes each as its own cover: the original entity drives the bottom rail, and a
 `… Top` entity drives the top (middle) rail. Single-rail shades are unaffected and keep
 their single cover and existing entity IDs.
 
+The top rail's position is inverted relative to the hub so the HA convention holds for
+both rails: **0% = closed** (rail lowered, covering the window) and **100% = open**
+(rail raised), with matching open/close and opening/closing states.
+
 The hub controls both rails together, so every TDBU move sends both rail positions,
 holding the rail you didn't touch in place. A **collision guard** (on by default,
 Options) keeps the two rails from crossing; set a minimum gap or disable it if you rely

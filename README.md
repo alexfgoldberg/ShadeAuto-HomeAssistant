@@ -10,14 +10,31 @@ Control Norman **ShadeAuto** shades locally via the hub’s undocumented HTTP AP
 - **Auto-discover shades** from any ShadeAuto hub(s).
 - One **Device** per discovered Shade
   - One **Cover** entity per shade: open/close/**set position** (0–100).
+  - **TDBU (top-down/bottom-up) shades** get a **second cover** for the top rail, controlled independently.
   - One **Battery (%)** sensor per shade.
   - One **Low Battery (%)** flag per shade.
 - Works with **multiple hubs** (add each hub by IP/Hostname).
 
 ## Entities per shade (unique device)
-- `cover.<shade>`: open/close/set position (0–100)
+- `cover.<shade>`: open/close/set position (0–100) — the bottom rail
+- `cover.<shade>_top`: the top rail, **TDBU shades only**
 - `sensor.<shade>_battery`: battery percent
 - `binary_sensor.<shade>_battery_low`: low-battery flag (threshold in Options)
+
+## TDBU (top-down/bottom-up) shades
+TDBU shades (hub `ModuleType` 33) have two independently-motorised rails. This build
+exposes each as its own cover: the original entity drives the bottom rail, and a second
+`… Top` entity drives the top (middle) rail. Single-rail shades are unaffected and keep
+their single cover and existing entity IDs.
+
+The top rail's position is inverted relative to the hub so the HA convention holds for
+both rails: **0% = closed** (rail lowered, covering the window) and **100% = open**
+(rail raised), with matching open/close and opening/closing states.
+
+The hub controls both rails together, so every TDBU move sends both rail positions,
+holding the rail you didn't touch in place. A **collision guard** (on by default,
+Options) keeps the two rails from crossing; set a minimum gap or disable it if you rely
+on the hub's own limits.
 
 ## Notes
 - Battery source is the hub’s `BatteryVoltage`. If it’s 0–100, we use it as-is; if it’s volts, we map 3.30–4.20 V → 0–100%.
@@ -35,6 +52,8 @@ Control Norman **ShadeAuto** shades locally via the hub’s undocumented HTTP AP
 - **Notification timeout (sec)**: hold time for the hub’s long-poll `/notification` request; `-1` lets the hub hold the connection open.
 - **Estimation enabled**: when on, estimates shade motion so `current_position` and `opening/closing` states are updated smoothly between hub reports.
 - **Estimated time to fully open (sec)**: time a shade typically takes to move from 0 → 100; used to scale the opening/closing duration and interpolate positions for partial moves.
+- **TDBU: prevent the two rails from crossing**: collision guard for TDBU shades (default on).
+- **TDBU: minimum gap to keep between rails (%)**: extra separation the guard enforces (default 0).
 
 ## Installation
 
@@ -119,7 +138,10 @@ Create new feature requests via creating a new Github Issue in this repo.  Note 
   ```
 
 ## Limitations
-- No top/middle rail (TDBU) control in this build.
+- TDBU support is detected by hub `ModuleType` (33) and rides the same undocumented
+  endpoints; the control field/behaviour was reverse-engineered against real hardware
+  and may vary by firmware. It degrades to single-rail behaviour when the second rail
+  isn't present.
 - Battery is exposed as **%**; mapping from volts is a heuristic if hub returns volts.
 - API is not official; behavior may change with updates.
 

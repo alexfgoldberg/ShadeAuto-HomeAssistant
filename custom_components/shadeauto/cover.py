@@ -15,7 +15,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, RAIL_BOTTOM, RAIL_MIDDLE, RAIL_FIELDS, RAIL_INVERT
 from .coordinator import ShadeAutoCoordinator
 import logging
 
@@ -27,7 +27,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add_entitie
     entities: list[ShadeAutoCover] = []
     for uid, meta in coord.peripherals.items():
         name = meta.get("name", f"Shade {uid}")
+        # Original single cover per shade (bottom rail). Preserves existing unique_id.
         entities.append(ShadeAutoCover(coord, entry, uid, name))
+        # TDBU shades expose a second, independently-motorised top-down rail.
+        if coord.is_tdbu(uid):
+            entities.append(ShadeAutoCover(coord, entry, uid, f"{name} Top", rail=RAIL_MIDDLE))
     add_entities(entities)
 
 
@@ -40,14 +44,19 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         | CoverEntityFeature.SET_POSITION
     )
 
-    def __init__(self, coordinator: ShadeAutoCoordinator, entry: ConfigEntry, uid: str, name: str) -> None:
+    def __init__(self, coordinator: ShadeAutoCoordinator, entry: ConfigEntry, uid: str, name: str, rail: str = RAIL_BOTTOM) -> None:
         super().__init__(coordinator)
         self._uid = str(uid)
         self._entry = entry
         self._attr_name = name
+        self._rail = rail
+        self._rail_field = RAIL_FIELDS[rail]
+        self._invert = RAIL_INVERT[rail]
 
         thing = coordinator.data.get("thing_name") or coordinator.api.host
-        self._attr_unique_id = f"shadeauto_{thing}_{uid}"
+        # Bottom keeps the original unique_id (no history loss); middle gets a suffix.
+        suffix = "" if rail == RAIL_BOTTOM else f"_{rail}"
+        self._attr_unique_id = f"shadeauto_{thing}_{uid}{suffix}"
 
         # UI estimation state
         self._est_start_pos: float | None = None
@@ -61,10 +70,12 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
     @property
     def device_info(self) -> DeviceInfo:
         host = self.coordinator.api.host
+        # Both rails of a TDBU shade share one device; use the stable shade name so the
+        # "Top" sub-entity doesn't rename the device.
         return DeviceInfo(
             identifiers={(DOMAIN, f"shade_{host}_{self._uid}")},
             via_device=(DOMAIN, f"hub_{host}"),
-            name=self.name,
+            name=self.coordinator.peripherals.get(self._uid, {}).get("name", self.name),
             manufacturer="Norman (ShadeAuto)",
             model=str(self.coordinator.peripherals.get(self._uid, {}).get("module_detail") or "Shade"),
         )
@@ -74,7 +85,25 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
 
     @property
     def available(self) -> bool:
-        return self._uid in self.coordinator.data.get("status", {})
+        st = self.coordinator.data.get("status", {})
+        if self._uid not in st:
+            return False
+        # The top-down rail is only meaningful while the hub reports its position.
+        if self._rail != RAIL_BOTTOM:
+            return st.get(self._uid, {}).get(self._rail_field) is not None
+        return True
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose both raw rail positions on TDBU shades for observability."""
+        if not self.coordinator.is_tdbu(self._uid):
+            return None
+        st = self._status_for_uid()
+        return {
+            "rail": self._rail,
+            "bottom_rail_position": st.get(RAIL_FIELDS[RAIL_BOTTOM]),
+            "middle_rail_position": st.get(RAIL_FIELDS[RAIL_MIDDLE]),
+        }
 
     # --- estimation helpers ---
 
@@ -99,12 +128,12 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
 
         if not est_enabled or self._est_start_pos is None or self._est_target is None or self._est_start_ts is None:
             # Fall back to coordinator's effective position
-            _LOGGER.debug("current_estimated_position: uid=%s Fallback", self._uid)
+            _LOGGER.debug("current_estimated_position: uid=%s rail=%s Fallback", self._uid, self._rail)
             try:
-                return self.coordinator.get_effective_position(self._uid)
+                return self.coordinator.get_effective_position(self._uid, self._rail)
             except Exception:
                 st = self._status_for_uid()
-                raw = st.get("BottomRailPosition")
+                raw = st.get(self._rail_field)
                 try:
                     return int(raw) if raw is not None else None
                 except (TypeError, ValueError):
@@ -151,12 +180,12 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         if start_pos is None:
             # Use the last effective position from the coordinator (or raw hub) as a baseline
             try:
-                base = self.coordinator.get_effective_position(self._uid)
+                base = self.coordinator.get_effective_position(self._uid, self._rail)
             except Exception:
                 base = None
             if base is None:
                 st = self._status_for_uid()
-                raw = st.get("BottomRailPosition")
+                raw = st.get(self._rail_field)
                 try:
                     base = int(raw) if raw is not None else 0
                 except (TypeError, ValueError):
@@ -247,13 +276,21 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
             self._anim_task = None
             _LOGGER.debug("_animate_slider: uid=%s Finished", self._uid)
             
+    # --- rail-direction conversion (HA 0=closed/100=open <-> hub units) ---
+
+    def _flip(self, pos: int | None) -> int | None:
+        """Convert between hub units and HA units. Symmetric; no-op unless inverted."""
+        if pos is None or not self._invert:
+            return pos
+        return 100 - int(pos)
+
     # --- core properties ---
 
     @property
     def current_cover_position(self) -> int | None:
-        """Report the shade position, using time-based estimation when enabled."""
-        pos = self._current_estimated_position()
-        _LOGGER.debug("pos_debug: current_cover_position uid=%s -> %s", self._uid, pos)
+        """Report the shade position (HA units), using estimation when enabled."""
+        pos = self._flip(self._current_estimated_position())
+        _LOGGER.debug("pos_debug: current_cover_position uid=%s rail=%s -> %s", self._uid, self._rail, pos)
         return pos
 
     @property
@@ -269,9 +306,9 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         now = time.monotonic()
         if now - self._est_start_ts >= self._est_travel_time_s:
             return None
-        # target greater than start => opening
+        # target greater than start => opening (flip for the inverted top rail)
         val = self._est_target > self._est_start_pos
-        return val
+        return (not val) if self._invert else val
 
     @property
     def is_closing(self) -> bool | None:
@@ -281,33 +318,27 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         now = time.monotonic()
         if now - self._est_start_ts >= self._est_travel_time_s:
             return None
-        # target less than start => closing
+        # target less than start => closing (flip for the inverted top rail)
         val = self._est_target < self._est_start_pos
-        return val
+        return (not val) if self._invert else val
 
     # --- commands ---
 
-    async def async_set_cover_position(self, **kwargs) -> None:
-        pos = int(kwargs["position"])
+    async def _move_to(self, target: int) -> None:
+        """Clamp (TDBU collision guard), estimate, then command the correct rail."""
+        pos = self.coordinator.clamp_target(self._uid, self._rail, int(target))
         self._start_estimation_for_command(pos)
         self._start_animation()
         self.async_write_ha_state()
-        await self.coordinator.api.control(self._uid, bottom=pos)
-        self.coordinator.register_command(self._uid, pos)
+        await self.coordinator.async_send_rail(self._uid, self._rail, pos)
+        self.coordinator.register_command(self._uid, pos, rail=self._rail)
+
+    async def async_set_cover_position(self, **kwargs) -> None:
+        await self._move_to(self._flip(int(kwargs["position"])))
 
     async def async_open_cover(self, **kwargs) -> None:
-        target = 100
-        self._start_estimation_for_command(target)
-        self._start_animation()
-        self.async_write_ha_state()
-        await self.coordinator.api.control(self._uid, bottom=target)
-        self.coordinator.register_command(self._uid, target)
+        await self._move_to(self._flip(100))
 
     async def async_close_cover(self, **kwargs) -> None:
-        target = 0
-        self._start_estimation_for_command(target)
-        self._start_animation()
-        self.async_write_ha_state()
-        await self.coordinator.api.control(self._uid, bottom=target)
-        self.coordinator.register_command(self._uid, target)
+        await self._move_to(self._flip(0))
 

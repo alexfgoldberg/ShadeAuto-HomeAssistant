@@ -121,32 +121,43 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
             pass
         return est_enabled, full_time
 
+    def _hub_position(self) -> int | None:
+        """Latest hub-truth position for this rail (used when not mid-move)."""
+        try:
+            return self.coordinator.get_effective_position(self._uid, self._rail)
+        except Exception:
+            st = self._status_for_uid()
+            raw = st.get(self._rail_field)
+            try:
+                return int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                return None
+
     def _current_estimated_position(self) -> int | None:
-        """Return an estimated position based on last command and elapsed time."""
+        """Return an estimated position based on last command and elapsed time.
+
+        The estimate is only used *during* a move (to animate the slider). Before a
+        move starts and once it completes, defer to the hub-truth position so changes
+        made outside HA (the vendor app, automations) surface on the next poll instead
+        of the entity staying pinned to the last HA-commanded target.
+        """
         est_enabled, _full_time = self._estimation_config()
         now = time.monotonic()
 
         if not est_enabled or self._est_start_pos is None or self._est_target is None or self._est_start_ts is None:
-            # Fall back to coordinator's effective position
+            # No active estimation -> hub truth
             _LOGGER.debug("current_estimated_position: uid=%s rail=%s Fallback", self._uid, self._rail)
-            try:
-                return self.coordinator.get_effective_position(self._uid, self._rail)
-            except Exception:
-                st = self._status_for_uid()
-                raw = st.get(self._rail_field)
-                try:
-                    return int(raw) if raw is not None else None
-                except (TypeError, ValueError):
-                    return None
+            return self._hub_position()
 
         if self._est_travel_time_s is None or self._est_travel_time_s <= 0:
             _LOGGER.debug("current_estimated_position: uid=%s No Travel Time", self._uid)
-            return int(round(self._est_target))
+            return self._hub_position()
 
         dt = max(0.0, now - self._est_start_ts)
         if dt >= self._est_travel_time_s:
+            # Move window elapsed -> hand back to the hub so external moves show up
             _LOGGER.debug("current_estimated_position: uid=%s Complete Travel Time", self._uid)
-            return int(round(self._est_target))
+            return self._hub_position()
 
         ratio = max(0.0, min(dt / self._est_travel_time_s, 1.0))
         est = self._est_start_pos + (self._est_target - self._est_start_pos) * ratio

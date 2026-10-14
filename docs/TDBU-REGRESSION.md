@@ -1,4 +1,7 @@
-# TDBU 0.4.1 regression evidence
+# TDBU regression evidence
+
+The deployed private fork uses version 0.4.1. This upstream PR leaves the manifest
+version unchanged at 0.3.0 so the maintainer can manage the release.
 
 Scope: rail command coordination and position reporting. This is a source-level,
 transport-mocked regression suite, not a Home Assistant frontend or hardware test.

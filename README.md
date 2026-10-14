@@ -28,7 +28,7 @@ exposes each as its own cover: the original entity drives the bottom rail, and a
 their single cover and existing entity IDs.
 
 Both rail positions use the hub's height axis: **0% = fully lowered** and **100% =
-fully raised**. The top cover is no longer inverted in 0.4.1. Rail height does not
+fully raised**. The top cover is no longer inverted in this update. Rail height does not
 by itself describe how much of the window is covered; that depends on both rails.
 
 The hub controls both rails together, so every TDBU move sends both rail positions,
@@ -39,10 +39,10 @@ to permit it. For example, raising the bottom to 100% also raises a lowered top 
 to 100%. With a nonzero minimum gap, the bottom's highest position is 100 minus the
 gap. Concurrent scene calls are serialized per shade, including retries.
 
-### Upgrading from 0.4.0
+### Upgrading from earlier TDBU builds
 
 The old top cover mapped the hub's 35% height to 65% and sent a full-open command to
-the bottom of its travel. In 0.4.1, full-open presets should set **both covers to 100%**
+the bottom of its travel. With this update, full-open presets should set **both covers to 100%**
 (or call `cover.open_cover` on both). Review saved top-rail positions: to preserve an
 old physical destination, replace an old numeric top position `p` with `100 - p`.
 Recapturing scenes at the desired physical position is another option. Entity IDs

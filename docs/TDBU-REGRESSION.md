@@ -2,8 +2,8 @@
 
 Scope: rail command coordination and position reporting. This is a source-level,
 transport-mocked regression suite, not a Home Assistant frontend or hardware test.
-The installed Home Assistant source/version and preset YAML have not been retrieved;
-live parity remains unverified because Home Assistant was unreachable.
+The initial run was source-only. Live installation and verification were subsequently
+completed on Home Assistant Core 2026.10.1, as recorded below.
 
 The reported fixture has both raw rail positions at 35, with the top physically
 mostly lowered and the bottom immediately underneath it. The old top entity reports
@@ -37,7 +37,27 @@ pair planning and display changes) reports 7 failures. This validates that the s
 catches the unresolved preset and position-display defects rather than merely passing
 both implementations.
 
-Hardware verification still required: install the candidate, confirm both raw rail
-positions increase as they rise, execute full-open from the lowered privacy position,
-and confirm physical arrival and final reported values. Review numeric scene targets
-when upgrading because the top position inversion has changed.
+## Live verification (2026-10-13, America/Los_Angeles)
+
+- Existing installation was version 0.4.0; its three changed Python files matched
+  the repository's original source fingerprints.
+- Backed up the installed component and scripts on the Home Assistant host and
+  verified the backup bytes before copying the update.
+- Installed const.py, coordinator.py, cover.py and manifest.json from pinned commit
+  5cd1b49619a6a638cb8843b3d034115921693996. All four installed files passed SHA-256
+  comparisons to the locally tested source.
+- Preserved the existing daytime physical position by changing the inverted top
+  target from 65 to 35. Changed the dining Close preset to explicitly lower bottoms
+  and raise tops; the global nighttime preset already calls this dining script.
+- `ha core check` completed successfully. Restarted Core with explicit user approval.
+- After startup, the affected rail entities both reported current_position 35 and
+  raw 35/35, establishing that the corrected direction/reporting behavior was active.
+- Executed cover.open_cover on one dining bottom rail only, matching the existing
+  Full Open script's action. Both raw rail positions ultimately reported 100/100,
+  and both covers reported current_position 100.
+- The user independently confirmed the shade was physically fully open.
+
+The movement test covered one real TDBU shade. Other shades and the changed Daytime
+and Close movement sequences were not physically exercised. The installed update is
+manual; HACS still tracks the original upstream 0.3.0 package. An upstream redownload
+would replace these custom files, so future upgrades should use the corrected fork.

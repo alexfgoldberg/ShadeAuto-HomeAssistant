@@ -29,11 +29,9 @@ RAIL_MIDDLE = "middle"
 # Hub status/control field name for each rail. Bottom is the original single-rail
 # field; middle is the second (top-down) rail on TDBU shades.
 RAIL_FIELDS = {RAIL_BOTTOM: "BottomRailPosition", RAIL_MIDDLE: "MiddleRailPosition"}
-# The top-down (middle) rail travels opposite a normal shade: raising it opens the
-# window. Invert its HA position so 0=closed / 100=open matches what you see, keeping
-# open/close, opening/closing and the slider intuitive. Hub commands stay in native
-# units; inversion happens only at the cover's HA boundary.
-RAIL_INVERT = {RAIL_BOTTOM: False, RAIL_MIDDLE: True}
+# Both hub fields measure rail height: 0=lowered, 100=raised. The top rail
+# must use the same axis as the bottom rail and the collision guard.
+RAIL_INVERT = {RAIL_BOTTOM: False, RAIL_MIDDLE: False}
 # Collision guard: keep the two rails of a TDBU shade from crossing. Only ever
 # applied to TDBU shades; single-rail shades are never clamped.
 DEFAULT_COLLISION_GUARD = True

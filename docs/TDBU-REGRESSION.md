@@ -16,7 +16,7 @@ transport is a fake that yields during every POST to expose concurrent schedulin
 No live hub requests occur. Motion registration substitutes omit HA background tasks;
 notification polling, real retry timing and firmware behavior are not certified.
 
-13 test cases pass on the candidate, including:
+14 test cases pass on the candidate, including:
 
 - Full-open from 35/35, in both rail orders, sequentially and concurrently.
 - Concurrent independent moves preserve both destinations.
@@ -32,8 +32,8 @@ notification polling, real retry timing and firmware behavior are not certified.
 - A retry superseded while waiting for the shade lock sends nothing.
 - Completed estimates display reported height; new estimates start at measurement.
 
-The same 13-case suite against cf6d5a6 (the command-race-only fix, before direction,
-pair planning and display changes) reports 6 failures. This validates that the suite
+The same 14-case suite against cf6d5a6 (the command-race-only fix, before direction,
+pair planning and display changes) reports 7 failures. This validates that the suite
 catches the unresolved preset and position-display defects rather than merely passing
 both implementations.
 

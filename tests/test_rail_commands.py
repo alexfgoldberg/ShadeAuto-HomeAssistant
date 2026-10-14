@@ -216,6 +216,11 @@ class PositionDisplay(unittest.TestCase):
         self.assertEqual(cover._est_start_pos, 35)
         self.assertAlmostEqual(cover._est_travel_time_s, 18.2)
 
+    def test_new_move_discards_an_expired_estimate(self):
+        cover = self.make_cover('bottom')
+        cover._start_estimation_for_command(100)
+        self.assertEqual(cover._est_start_pos, 35)
+
 
 if __name__ == '__main__':
     unittest.main()

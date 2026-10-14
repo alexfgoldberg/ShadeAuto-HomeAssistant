@@ -181,7 +181,7 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         start_pos: float | None = None
         if self._est_start_pos is not None and self._est_target is not None and self._est_start_ts is not None and self._est_travel_time_s:
             dt_prev = max(0.0, now - self._est_start_ts)
-            if self._est_travel_time_s > 0:
+            if self._est_travel_time_s > 0 and dt_prev < self._est_travel_time_s:
                 ratio_prev = max(0.0, min(dt_prev / self._est_travel_time_s, 1.0))
                 start_pos = self._est_start_pos + (self._est_target - self._est_start_pos) * ratio_prev
 

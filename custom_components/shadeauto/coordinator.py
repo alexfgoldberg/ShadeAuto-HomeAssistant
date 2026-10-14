@@ -66,6 +66,9 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._peripherals: Dict[str, Dict[str, Any]] = {}
         self._cmd_seq = 0
         self._last_cmd: Dict[str, Dict[str, Any]] = {}
+        # Rail commands carry both targets. Serialize payload construction as well
+        # as the POST so concurrent cover calls cannot overwrite a sibling move.
+        self._rail_command_locks: dict[str, asyncio.Lock] = {}
         # Motion / fake-position state
         self._motion: dict[str, ShadeMotionState] = {}
         # Long-poll state
@@ -342,6 +345,53 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 kwargs[other] = int(hold)
         await self.api.control(uid, **kwargs)
 
+    async def async_move_rail(self, uid: str, rail: str, target: int) -> int:
+        """Send a safe rail pair without discarding the requested destination.
+
+        If the requested rail would cross its companion, move the companion just
+        enough to make room. This lets both rails reach the top regardless of the
+        order in which a scene calls their cover entities.
+        """
+        uid = str(uid)
+        lock = self._rail_command_locks.setdefault(uid, asyncio.Lock())
+        async with lock:
+            pos = max(0, min(100, int(target)))
+            targets = {rail: pos}
+            other = RAIL_MIDDLE if rail == RAIL_BOTTOM else RAIL_BOTTOM
+            hold = None
+            if self.is_tdbu(uid):
+                hold = self.get_effective_position(uid, other)
+                if hold is None:
+                    raise UpdateFailed("Cannot move TDBU shade without both rail positions")
+                guard, gap = self._collision_config()
+                if guard:
+                    gap = max(0, min(100, gap))
+                    if rail == RAIL_BOTTOM:
+                        pos = min(pos, 100 - gap)
+                        targets[other] = max(hold, pos + gap)
+                    else:
+                        pos = max(pos, gap)
+                        targets[other] = min(hold, pos - gap)
+                    targets[rail] = pos
+                else:
+                    targets[other] = hold
+            await self.api.control(uid, **targets)
+            for moved_rail, moved_target in targets.items():
+                if moved_rail == rail or moved_target != hold:
+                    self.register_command(uid, moved_target, rail=moved_rail)
+            self.async_update_listeners()
+            return pos
+
+    async def _async_retry_rail(self, uid: str, rail: str, target: int, cmd_id: int) -> None:
+        """Keep retries from racing new moves or resurrecting superseded targets."""
+        lock = self._rail_command_locks.setdefault(uid, asyncio.Lock())
+        async with lock:
+            latest = self._last_cmd.get(_mkey(uid, rail))
+            if latest is None or latest.get("id") != cmd_id:
+                return
+            retry_target = self.clamp_target(uid, rail, target)
+            await self.async_send_rail(uid, rail, retry_target)
+
     def register_command(self, uid: str, target: int, rail: str = RAIL_BOTTOM) -> int:
         """Record latest command for a shade rail and start watcher + verify timer."""
         uid_s = str(uid)
@@ -560,8 +610,7 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             state.retry_attempted = True
             state.last_control_ts = time.monotonic()
             self._last_global_control_ts = state.last_control_ts
-            retry_target = self.clamp_target(uid_s, rail, int(target))
-            await self.async_send_rail(uid_s, rail, retry_target)
+            await self._async_retry_rail(uid_s, rail, int(target), cmd_id)
             state = getattr(self, "_motion", {}).get(key)
             _LOGGER.debug(
                 "pos_debug_3: verify uid=%s state_before_retry in_motion=%s pending=%s last_hub_pos=%s",

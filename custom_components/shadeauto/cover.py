@@ -141,12 +141,12 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
 
         if self._est_travel_time_s is None or self._est_travel_time_s <= 0:
             _LOGGER.debug("current_estimated_position: uid=%s No Travel Time", self._uid)
-            return int(round(self._est_target))
+            return self._measured_position()
 
         dt = max(0.0, now - self._est_start_ts)
         if dt >= self._est_travel_time_s:
             _LOGGER.debug("current_estimated_position: uid=%s Complete Travel Time", self._uid)
-            return int(round(self._est_target))
+            return self._measured_position()
 
         ratio = max(0.0, min(dt / self._est_travel_time_s, 1.0))
         est = self._est_start_pos + (self._est_target - self._est_start_pos) * ratio
@@ -155,6 +155,14 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
             return int(round(est))
         except (TypeError, ValueError):
             return int(round(self._est_target))
+
+    def _measured_position(self) -> int | None:
+        """After estimated travel, display the hub reading rather than an old target."""
+        raw = self._status_for_uid().get(self._rail_field)
+        try:
+            return int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _start_estimation_for_command(self, target: int) -> None:
         """Start or update estimation state when a new command is issued."""
@@ -173,14 +181,14 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
         start_pos: float | None = None
         if self._est_start_pos is not None and self._est_target is not None and self._est_start_ts is not None and self._est_travel_time_s:
             dt_prev = max(0.0, now - self._est_start_ts)
-            if self._est_travel_time_s > 0:
+            if self._est_travel_time_s > 0 and dt_prev < self._est_travel_time_s:
                 ratio_prev = max(0.0, min(dt_prev / self._est_travel_time_s, 1.0))
                 start_pos = self._est_start_pos + (self._est_target - self._est_start_pos) * ratio_prev
 
         if start_pos is None:
             # Use the last effective position from the coordinator (or raw hub) as a baseline
             try:
-                base = self.coordinator.get_effective_position(self._uid, self._rail)
+                base = self._measured_position()
             except Exception:
                 base = None
             if base is None:
@@ -326,12 +334,10 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
 
     async def _move_to(self, target: int) -> None:
         """Clamp (TDBU collision guard), estimate, then command the correct rail."""
-        pos = self.coordinator.clamp_target(self._uid, self._rail, int(target))
+        pos = await self.coordinator.async_move_rail(self._uid, self._rail, int(target))
         self._start_estimation_for_command(pos)
         self._start_animation()
         self.async_write_ha_state()
-        await self.coordinator.async_send_rail(self._uid, self._rail, pos)
-        self.coordinator.register_command(self._uid, pos, rail=self._rail)
 
     async def async_set_cover_position(self, **kwargs) -> None:
         await self._move_to(self._flip(int(kwargs["position"])))

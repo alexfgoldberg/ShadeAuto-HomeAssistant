@@ -27,14 +27,27 @@ exposes each as its own cover: the original entity drives the bottom rail, and a
 `… Top` entity drives the top (middle) rail. Single-rail shades are unaffected and keep
 their single cover and existing entity IDs.
 
-The top rail's position is inverted relative to the hub so the HA convention holds for
-both rails: **0% = closed** (rail lowered, covering the window) and **100% = open**
-(rail raised), with matching open/close and opening/closing states.
+Both rail positions use the hub's height axis: **0% = fully lowered** and **100% =
+fully raised**. The top cover is no longer inverted in 0.4.1. Rail height does not
+by itself describe how much of the window is covered; that depends on both rails.
 
 The hub controls both rails together, so every TDBU move sends both rail positions,
-holding the rail you didn't touch in place. A **collision guard** (on by default,
-Options) keeps the two rails from crossing; set a minimum gap or disable it if you rely
-on the hub's own limits.
+holding the rail you didn't touch in place whenever the destination permits it. A
+**collision guard** (on by default, Options) keeps the top rail at or above the bottom
+rail. If a requested destination needs more room, the companion moves just enough
+to permit it. For example, raising the bottom to 100% also raises a lowered top rail
+to 100%. With a nonzero minimum gap, the bottom's highest position is 100 minus the
+gap. Concurrent scene calls are serialized per shade, including retries.
+
+### Upgrading from 0.4.0
+
+The old top cover mapped the hub's 35% height to 65% and sent a full-open command to
+the bottom of its travel. In 0.4.1, full-open presets should set **both covers to 100%**
+(or call `cover.open_cover` on both). Review saved top-rail positions: to preserve an
+old physical destination, replace an old numeric top position `p` with `100 - p`.
+Recapturing scenes at the desired physical position is another option. Entity IDs
+are unchanged. Once estimated travel finishes, the displayed position returns to
+the hub reading rather than remaining pinned to an old target.
 
 ## Notes
 - Battery source is the hub’s `BatteryVoltage`. If it’s 0–100, we use it as-is; if it’s volts, we map 3.30–4.20 V → 0–100%.

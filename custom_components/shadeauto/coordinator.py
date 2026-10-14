@@ -66,6 +66,9 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._peripherals: Dict[str, Dict[str, Any]] = {}
         self._cmd_seq = 0
         self._last_cmd: Dict[str, Dict[str, Any]] = {}
+        # Rail commands carry both targets. Serialize payload construction as well
+        # as the POST so concurrent cover calls cannot overwrite a sibling move.
+        self._rail_command_locks: dict[str, asyncio.Lock] = {}
         # Motion / fake-position state
         self._motion: dict[str, ShadeMotionState] = {}
         # Long-poll state
@@ -342,6 +345,26 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 kwargs[other] = int(hold)
         await self.api.control(uid, **kwargs)
 
+    async def async_move_rail(self, uid: str, rail: str, target: int) -> int:
+        """Clamp, send and record one move atomically for the whole shade."""
+        uid = str(uid)
+        lock = self._rail_command_locks.setdefault(uid, asyncio.Lock())
+        async with lock:
+            pos = self.clamp_target(uid, rail, int(target))
+            await self.async_send_rail(uid, rail, pos)
+            self.register_command(uid, pos, rail=rail)
+            return pos
+
+    async def _async_retry_rail(self, uid: str, rail: str, target: int, cmd_id: int) -> None:
+        """Keep retries from racing new moves or resurrecting superseded targets."""
+        lock = self._rail_command_locks.setdefault(uid, asyncio.Lock())
+        async with lock:
+            latest = self._last_cmd.get(_mkey(uid, rail))
+            if latest is None or latest.get("id") != cmd_id:
+                return
+            retry_target = self.clamp_target(uid, rail, target)
+            await self.async_send_rail(uid, rail, retry_target)
+
     def register_command(self, uid: str, target: int, rail: str = RAIL_BOTTOM) -> int:
         """Record latest command for a shade rail and start watcher + verify timer."""
         uid_s = str(uid)
@@ -560,8 +583,7 @@ class ShadeAutoCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             state.retry_attempted = True
             state.last_control_ts = time.monotonic()
             self._last_global_control_ts = state.last_control_ts
-            retry_target = self.clamp_target(uid_s, rail, int(target))
-            await self.async_send_rail(uid_s, rail, retry_target)
+            await self._async_retry_rail(uid_s, rail, int(target), cmd_id)
             state = getattr(self, "_motion", {}).get(key)
             _LOGGER.debug(
                 "pos_debug_3: verify uid=%s state_before_retry in_motion=%s pending=%s last_hub_pos=%s",

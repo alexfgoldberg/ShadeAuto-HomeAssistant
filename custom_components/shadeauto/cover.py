@@ -326,12 +326,10 @@ class ShadeAutoCover(CoordinatorEntity[ShadeAutoCoordinator], CoverEntity):
 
     async def _move_to(self, target: int) -> None:
         """Clamp (TDBU collision guard), estimate, then command the correct rail."""
-        pos = self.coordinator.clamp_target(self._uid, self._rail, int(target))
+        pos = await self.coordinator.async_move_rail(self._uid, self._rail, int(target))
         self._start_estimation_for_command(pos)
         self._start_animation()
         self.async_write_ha_state()
-        await self.coordinator.async_send_rail(self._uid, self._rail, pos)
-        self.coordinator.register_command(self._uid, pos, rail=self._rail)
 
     async def async_set_cover_position(self, **kwargs) -> None:
         await self._move_to(self._flip(int(kwargs["position"])))
